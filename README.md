@@ -4,6 +4,27 @@ Este projeto didático demonstra como verificar a integração entre uma API HTT
 
 Os testes estão em [server/test/integration/](server/test/integration/) e contêm 47 casos em cinco suítes, contando as variações de `test.each`. Eles substituem os antigos testes unitários.
 
+## Organização atual dos testes
+
+A pasta `server/test/` contém dois diretórios: `integration/`, com os cenários executáveis, e `support/`, com a infraestrutura compartilhada. As antigas pastas `test/database/` e `test/modules/` foram removidas. O auxiliar de banco fica em `test/support/database.ts`.
+
+| Suíte | Casos | Responsabilidade |
+| --- | --- | --- |
+| [students.test.ts](server/test/integration/students.test.ts) | 2 | Cadastro, persistência, busca, ordenação e limites válidos de alunos. |
+| [courses.test.ts](server/test/integration/courses.test.ts) | 1 | Cadastro, ID gerado, persistência, busca e ordenação de disciplinas. |
+| [enrollments.test.ts](server/test/integration/enrollments.test.ts) | 10 | Matrículas, chave composta, data, ordenação, duplicação, referências inexistentes e campos obrigatórios. |
+| [http.test.ts](server/test/integration/http.test.ts) | 6 | Healthcheck, rota desconhecida, coleções vazias e erros do parser JSON. |
+| [errors.test.ts](server/test/integration/errors.test.ts) | 28 | Unicidade de alunos e disciplinas, recursos ausentes e validações compartilhadas entre recursos. |
+
+Um caso pode conter várias requisições e asserções. A divisão por arquivo organiza os assuntos; a quantidade de casos não representa a quantidade de endpoints ou de comportamentos verificados.
+
+| Auxiliar | Responsabilidade |
+| --- | --- |
+| [database.ts](server/test/support/database.ts) | `createTestDatabase()` cria o cliente e o schema e fornece abertura, rollback e encerramento. |
+| [http.ts](server/test/support/http.ts) | `createHttpClient()` fornece `request()`, `rawRequest()` e `expectError()`. |
+| [fixtures.ts](server/test/support/fixtures.ts) | `createEnrollmentPrerequisites()` cadastra aluno e disciplina pela API e retorna suas chaves. |
+| [integration-app.ts](server/test/support/integration-app.ts) | `useIntegrationApp()` combina os auxiliares, registra os hooks e inicia e encerra o servidor. |
+
 ## O que os testes integram
 
 Cada requisição percorre as camadas reais da aplicação:
@@ -34,6 +55,8 @@ docker compose -f compose.test.yml up -d --wait
 ```
 
 O comando inicia somente o PostgreSQL exclusivo dos testes e aguarda seu healthcheck. O servidor HTTP será iniciado pela própria suíte.
+
+Use `compose.test.yml` sozinho, como no comando acima. Ele é uma configuração independente; não é necessário combiná-lo com `compose.yml` nem iniciar o frontend ou a API da demonstração.
 
 ### 2. Instalar dependências e executar os testes
 
@@ -123,7 +146,7 @@ Cada arquivo de testes usa seu próprio schema, sua conexão PostgreSQL e seu se
 | `beforeEach` | Executa `BEGIN` antes de cada teste. |
 | Teste | Prepara seus registros, envia requisições e verifica as respostas e os dados. |
 | `afterEach` | Executa `ROLLBACK`, desfazendo as alterações do teste. |
-| `afterAll` | Fecha o servidor HTTP, remove o schema com `DROP SCHEMA ... CASCADE` e encerra a conexão. |
+| `afterAll` | Fecha o servidor e suas conexões HTTP, executa um rollback de limpeza, remove o schema com `DROP SCHEMA ... CASCADE` e encerra o cliente PostgreSQL. |
 
 `createApp(client)` recebe o mesmo cliente PostgreSQL usado no controle das transações. Por isso, as consultas dos repositórios participam da transação aberta pelo teste. O servidor escuta em `127.0.0.1` com porta `0`, permitindo que o sistema operacional escolha uma porta disponível.
 
@@ -155,6 +178,8 @@ Nos erros, os testes verificam o status HTTP e a estrutura `{ statusCode, messag
 ## Como ler e ampliar os testes
 
 Cada caso prepara os dados, executa uma operação e verifica o resultado. O auxiliar `request()` envia JSON, verifica o `Content-Type` e devolve status e corpo da resposta. `expectError()` verifica o contrato dos erros `400`, `404` e `409`; os casos do parser verificam diretamente as respostas `400` e `413`.
+
+Para enviar texto que não é JSON válido, `http.test.ts` usa `rawRequest()`: ele retorna a `Response` original do `fetch` e permite configurar o corpo sem passar por `JSON.stringify`. As requisições têm limite padrão de cinco segundos. A conexão PostgreSQL também tem limite de cinco segundos, e o `beforeAll` permite até quinze segundos para preparar o banco e iniciar o servidor.
 
 Este trecho demonstra um conflito de matrícula provocado no banco real:
 
@@ -213,6 +238,8 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
 O workflow [.github/workflows/integration-tests.yml](.github/workflows/integration-tests.yml) roda em cada `push`, em cada `pull_request` e manualmente pela aba **Actions** do GitHub. Para ativá-lo, versione o projeto com o workflow na pasta `.github/workflows/` da raiz do repositório e envie-o ao GitHub. A execução remota depende de GitHub Actions habilitado no repositório.
 
 O job usa Ubuntu, Node.js 24 e PostgreSQL 18 Alpine, a mesma imagem utilizada no Compose de testes. O GitHub inicia o PostgreSQL como um serviço temporário, aguarda seu healthcheck e informa a porta disponível pela variável `TEST_DATABASE_URL`. O CI não precisa iniciar o Compose: o serviço do workflow cumpre esse papel.
+
+Localmente, o Compose publica a porta fixa `5434`. No CI, a porta publicada é escolhida dinamicamente e usada para montar `TEST_DATABASE_URL` na etapa que executa os testes. A configuração dos testes permanece a mesma nos dois ambientes.
 
 As etapas são:
 
@@ -282,4 +309,10 @@ docker compose up -d --build
 ```
 
 Com as portas do modelo, a interface fica em `http://localhost:8080`, a API em `http://localhost:3002/api/students` e o banco da demonstração em `localhost:5433`. Essa execução usa `compose.yml`, o seed e o volume da aplicação. A suíte automatizada usa `compose.test.yml` e o banco exclusivo na porta `5434`.
+
+| Ambiente | Inicialização | Dados e persistência |
+| --- | --- | --- |
+| Demonstração | `docker compose up -d --build` | Usa `.env`, aplica os scripts de inicialização do banco em um diretório de dados vazio e mantém os dados no volume `aula3_database_data`. |
+| Testes locais | `docker compose -f compose.test.yml up -d --wait` | Usa as credenciais fixas do Compose de testes, armazenamento temporário e schemas preparados pelos auxiliares. |
+| CI | Serviço PostgreSQL do workflow | Usa um banco temporário por job e a URL fornecida na etapa de testes. |
 

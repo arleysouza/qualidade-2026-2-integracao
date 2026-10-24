@@ -2,11 +2,11 @@
 
 Este projeto didático demonstra como verificar a integração entre uma API HTTP em Express, suas regras de negócio e um banco PostgreSQL real. A aplicação permite cadastrar alunos e disciplinas e registrar matrículas.
 
-Os testes estão em [server/test/integration/](server/test/integration/) e contêm 47 casos em cinco suítes, contando as variações de `test.each`. Eles substituem os antigos testes unitários.
+Os testes estão em [server/test/integration/](server/test/integration/) e contêm 47 casos em cinco suítes, contando as variações de `test.each`. 
 
 ## Organização atual dos testes
 
-A pasta `server/test/` contém dois diretórios: `integration/`, com os cenários executáveis, e `support/`, com a infraestrutura compartilhada. As antigas pastas `test/database/` e `test/modules/` foram removidas. O auxiliar de banco fica em `test/support/database.ts`.
+A pasta `server/test/` contém dois diretórios: `integration/`, com os cenários executáveis, e `support/`, com a infraestrutura compartilhada. O auxiliar de banco fica em `test/support/database.ts`.
 
 | Suíte | Casos | Responsabilidade |
 | --- | --- | --- |
@@ -123,18 +123,6 @@ O arquivo [compose.test.yml](compose.test.yml) configura o ambiente abaixo:
 
 O auxiliar de banco lê somente `TEST_DATABASE_URL` para configurar a conexão. Não carrega `.env` nem utiliza as variáveis `DB_*` da aplicação. Com os valores padrão, não é necessário criar `.env` para executar os testes.
 
-Para usar outra instância exclusiva de testes, defina a URL no PowerShell antes de executar o Jest:
-
-```powershell
-$env:TEST_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5434/aula3_test"
-npm test
-```
-
-O banco informado precisa existir, e o usuário deve poder criar schemas e tabelas. Se alterar a porta publicada no Compose, ajuste também a URL. Para voltar à conexão padrão:
-
-```powershell
-Remove-Item Env:TEST_DATABASE_URL
-```
 
 ## Isolamento e ciclo de vida
 

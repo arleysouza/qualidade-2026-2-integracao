@@ -2,7 +2,7 @@
 
 Este projeto didático demonstra como verificar a integração entre uma API HTTP em Express, suas regras de negócio e um banco PostgreSQL real. A aplicação permite cadastrar alunos e disciplinas e registrar matrículas.
 
-A suíte está em [server/test/integration/api.test.ts](server/test/integration/api.test.ts) e contém 47 casos, contando as variações de `test.each`. Ela substitui os antigos testes unitários.
+Os testes estão em [server/test/integration/](server/test/integration/) e contêm 47 casos em cinco suítes, contando as variações de `test.each`. Eles substituem os antigos testes unitários.
 
 ## O que os testes integram
 
@@ -43,12 +43,12 @@ npm ci
 npm test
 ```
 
-O Jest procura arquivos `test/integration/**/*.test.ts`. O comando usa `--runInBand` para executar a suíte em série, pois os testes compartilham uma conexão e usam transações para isolar os dados.
+O Jest procura arquivos `test/integration/**/*.test.ts`. O comando usa `--runInBand` para executar a suíte em série, mantendo a execução simples para a aula. Dentro de cada arquivo, os testes compartilham uma conexão e usam transações para isolar os dados. Arquivos diferentes recebem conexões e schemas próprios. Não use `test.concurrent` nessa estrutura.
 
 Uma execução bem-sucedida apresenta:
 
 ```text
-Test Suites: 1 passed, 1 total
+Test Suites: 5 passed, 5 total
 Tests:       47 passed, 47 total
 ```
 
@@ -98,7 +98,7 @@ O arquivo [compose.test.yml](compose.test.yml) configura o ambiente abaixo:
 | Banco | `aula3_test` |
 | Usuário e senha | `postgres` |
 
-A suíte lê somente `TEST_DATABASE_URL` para configurar a conexão. Não carrega `.env` nem utiliza as variáveis `DB_*` da aplicação. Com os valores padrão, não é necessário criar `.env` para executar os testes.
+O auxiliar de banco lê somente `TEST_DATABASE_URL` para configurar a conexão. Não carrega `.env` nem utiliza as variáveis `DB_*` da aplicação. Com os valores padrão, não é necessário criar `.env` para executar os testes.
 
 Para usar outra instância exclusiva de testes, defina a URL no PowerShell antes de executar o Jest:
 
@@ -115,7 +115,7 @@ Remove-Item Env:TEST_DATABASE_URL
 
 ## Isolamento e ciclo de vida
 
-A suíte usa um schema exclusivo por execução e uma transação por teste.
+Cada arquivo de testes usa seu próprio schema, sua conexão PostgreSQL e seu servidor HTTP. Dentro do arquivo, cada teste usa uma transação. O auxiliar `useIntegrationApp()`, chamado dentro de `describe`, registra os hooks desse ciclo de vida.
 
 | Etapa do Jest | Operações |
 | --- | --- |
@@ -127,7 +127,7 @@ A suíte usa um schema exclusivo por execução e uma transação por teste.
 
 `createApp(client)` recebe o mesmo cliente PostgreSQL usado no controle das transações. Por isso, as consultas dos repositórios participam da transação aberta pelo teste. O servidor escuta em `127.0.0.1` com porta `0`, permitindo que o sistema operacional escolha uma porta disponível.
 
-A suíte aplica o SQL de criação das tabelas, mas não executa `database/seed.sql`. Cada teste prepara seus próprios dados. O auxiliar `fixtures()` cadastra um aluno e uma disciplina por HTTP nos cenários que precisam desses registros.
+A suíte aplica o SQL de criação das tabelas, mas não executa `database/seed.sql`. Cada teste prepara seus próprios dados. O auxiliar `fixtures()`, baseado em `createEnrollmentPrerequisites()`, cadastra um aluno e uma disciplina por HTTP nos cenários que precisam desses registros.
 
 Sequências de IDs do PostgreSQL podem avançar mesmo após um `ROLLBACK`. Assim, os testes usam os IDs retornados pela API, sem pressupor que toda disciplina receberá o ID `1`.
 
@@ -174,6 +174,7 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
 
 ```text
 .
+├── .github/workflows/integration-tests.yml # Verificação automática no GitHub
 ├── compose.test.yml                   # PostgreSQL exclusivo dos testes
 ├── compose.yml                        # Aplicação completa
 ├── database/
@@ -184,7 +185,18 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
     ├── jest.config.cjs                # Descoberta, transformação e cobertura
     ├── tsconfig.test.json             # Tipagem da aplicação e dos testes
     ├── package.json                   # Dependências e comandos
-    ├── test/integration/api.test.ts   # Suíte HTTP com PostgreSQL real
+    ├── test/
+    │   ├── integration/
+    │   │   ├── students.test.ts       # Cadastro, consulta e limites de alunos
+    │   │   ├── courses.test.ts        # Cadastro e consulta de disciplinas
+    │   │   ├── enrollments.test.ts    # Matrículas, ordenação e restrições
+    │   │   ├── http.test.ts           # Healthcheck, coleções e parser JSON
+    │   │   └── errors.test.ts         # Validações e erros entre recursos
+    │   └── support/
+    │       ├── database.ts           # Schema, conexão e limpeza
+    │       ├── http.ts               # Requisições e asserções de erros
+    │       ├── fixtures.ts           # Pré-requisitos criados pela API
+    │       └── integration-app.ts    # Servidor e hooks de cada suíte
     └── src/
         ├── app.ts                    # createApp(db), rotas e tratamento de erros
         ├── main.ts                   # Inicialização de produção
@@ -195,6 +207,48 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
             ├── courses/              # Rotas, serviço e repositório de disciplinas
             └── enrollments/          # Rotas, serviço e repositório de matrículas
 ```
+
+## Integração contínua com GitHub Actions
+
+O workflow [.github/workflows/integration-tests.yml](.github/workflows/integration-tests.yml) roda em cada `push`, em cada `pull_request` e manualmente pela aba **Actions** do GitHub. Para ativá-lo, versione o projeto com o workflow na pasta `.github/workflows/` da raiz do repositório e envie-o ao GitHub. A execução remota depende de GitHub Actions habilitado no repositório.
+
+O job usa Ubuntu, Node.js 24 e PostgreSQL 18 Alpine, a mesma imagem utilizada no Compose de testes. O GitHub inicia o PostgreSQL como um serviço temporário, aguarda seu healthcheck e informa a porta disponível pela variável `TEST_DATABASE_URL`. O CI não precisa iniciar o Compose: o serviço do workflow cumpre esse papel.
+
+As etapas são:
+
+1. Obter o código e configurar Node.js com cache dos downloads do npm.
+2. Instalar as versões do `package-lock.json` com `npm ci`.
+3. Executar `npm run test:typecheck`.
+4. Executar `npm run build`.
+5. Executar `npm run test:coverage -- --ci` contra PostgreSQL real.
+6. Disponibilizar o diretório de cobertura como artefato `integration-coverage`, retido por sete dias, quando houver relatório gerado.
+
+Erros de tipos, compilação ou testes fazem o job falhar. O workflow tem permissões de leitura do repositório e limite de dez minutos. Não usa credenciais de produção; o banco de serviço é descartado ao final do job.
+
+O arquivo do workflow automatiza a verificação. Para exigir aprovação do CI antes de integrar uma alteração, configure uma regra de proteção de branch ou um ruleset no GitHub exigindo o check do job `integration`.
+
+## Organização para a aula
+
+Os arquivos de `integration/` expressam cenários e resultados esperados. Os arquivos de `support/` concentram a infraestrutura compartilhada, sem substituir componentes da aplicação por mocks. Ao criar uma nova suíte, use este padrão:
+
+```typescript
+import { useIntegrationApp } from "../support/integration-app";
+
+describe("Novo recurso", () => {
+  const { request } = useIntegrationApp();
+
+  test("retorna uma coleção vazia", async () => {
+    expect(await request("/api/students")).toEqual({
+      status: 200,
+      body: [],
+    });
+  });
+});
+```
+
+Para apresentar o projeto em aula, comece por um cenário de criação em `students.test.ts`. Acompanhe a chamada HTTP até a consulta SQL e depois mostre o `ROLLBACK` nos auxiliares. Em seguida, use a matrícula duplicada para observar uma restrição real do banco se tornando uma resposta `409`. Finalize com a execução automatizada na aba Actions e a leitura do relatório de cobertura.
+
+Essa organização mantém as responsabilidades visíveis sem introduzir uma ferramenta adicional para gerenciar os contêineres. O isolamento por transação continua sendo uma escolha didática explícita; os limites relacionados a Pool, commits e concorrência estão descritos abaixo.
 
 ## Escopo e limites
 
@@ -228,3 +282,4 @@ docker compose up -d --build
 ```
 
 Com as portas do modelo, a interface fica em `http://localhost:8080`, a API em `http://localhost:3002/api/students` e o banco da demonstração em `localhost:5433`. Essa execução usa `compose.yml`, o seed e o volume da aplicação. A suíte automatizada usa `compose.test.yml` e o banco exclusivo na porta `5434`.
+

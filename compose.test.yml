@@ -1,0 +1,16 @@
+services:
+  database-test:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: aula3_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5434:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aula3_test"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

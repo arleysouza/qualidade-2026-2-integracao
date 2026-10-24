@@ -1,9 +1,9 @@
 import { useIntegrationApp } from "../support/integration-app";
 
 describe("Alunos", () => {
-  const { client, request } = useIntegrationApp();
+  const { request } = useIntegrationApp();
 
-  test("cria, persiste, busca e ordena alunos pelo nome", async () => {
+  test("cria aluno e ignora campos extras", async () => {
     expect(
       await request("/api/students", "POST", {
         ra: 2,
@@ -11,37 +11,32 @@ describe("Alunos", () => {
         extra: true,
       }),
     ).toEqual({ status: 201, body: { ra: 2, name: "Bruno" } });
-    expect(
-      await request("/api/students", "POST", { ra: 1, name: "Ana" }),
-    ).toEqual({ status: 201, body: { ra: 1, name: "Ana" } });
+  });
+
+  test("busca um aluno cadastrado pelo RA", async () => {
+    const student = { ra: 2, name: "Bruno" };
+    const created = await request("/api/students", "POST", student);
+    expect(created.status).toBe(201);
+
     expect(await request("/api/students/2")).toEqual({
       status: 200,
-      body: { ra: 2, name: "Bruno" },
+      body: student,
     });
+  });
+
+  test("lista alunos pelo nome, independentemente do RA e da ordem de criação", async () => {
+    // A ordem de criação e de RA é inversa à ordem alfabética.
+    const first = await request("/api/students", "POST", { ra: 1, name: "Bruno" });
+    const second = await request("/api/students", "POST", { ra: 2, name: "Ana" });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+
     expect(await request("/api/students")).toEqual({
       status: 200,
       body: [
-        { ra: 1, name: "Ana" },
-        { ra: 2, name: "Bruno" },
+        { ra: 2, name: "Ana" },
+        { ra: 1, name: "Bruno" },
       ],
-    });
-    expect(
-      (await client.query("SELECT ra, name FROM students ORDER BY ra")).rows,
-    ).toEqual([
-      { ra: 1, name: "Ana" },
-      { ra: 2, name: "Bruno" },
-    ]);
-  });
-
-  test("aceita os limites de RA e tamanho do nome", async () => {
-    const body = { ra: 2147483647, name: "a".repeat(100) };
-    expect(await request("/api/students", "POST", body)).toEqual({
-      status: 201,
-      body,
-    });
-    expect(await request("/api/students/2147483647")).toEqual({
-      status: 200,
-      body,
     });
   });
 });

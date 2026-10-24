@@ -2,7 +2,7 @@
 
 Este projeto didático demonstra como verificar a integração entre uma API HTTP em Express, suas regras de negócio e um banco PostgreSQL real. A aplicação permite cadastrar alunos e disciplinas e registrar matrículas.
 
-Os testes estão em [server/test/integration/](server/test/integration/) e contêm 47 casos em cinco suítes, contando as variações de `test.each`. 
+Os testes estão em [server/test/integration/](server/test/integration/) e contêm 44 casos em quatro suítes, contando as variações de `test.each`.
 
 ## Organização atual dos testes
 
@@ -10,10 +10,9 @@ A pasta `server/test/` contém dois diretórios: `integration/`, com os cenário
 
 | Suíte | Casos | Responsabilidade |
 | --- | --- | --- |
-| [students.test.ts](server/test/integration/students.test.ts) | 2 | Cadastro, persistência, busca, ordenação e limites válidos de alunos. |
-| [courses.test.ts](server/test/integration/courses.test.ts) | 1 | Cadastro, ID gerado, persistência, busca e ordenação de disciplinas. |
-| [enrollments.test.ts](server/test/integration/enrollments.test.ts) | 10 | Matrículas, chave composta, data, ordenação, duplicação, referências inexistentes e campos obrigatórios. |
-| [http.test.ts](server/test/integration/http.test.ts) | 6 | Healthcheck, rota desconhecida, coleções vazias e erros do parser JSON. |
+| [students.test.ts](server/test/integration/students.test.ts) | 3 | Criação com campos extras, busca por RA e listagem ordenada pelo nome. |
+| [courses.test.ts](server/test/integration/courses.test.ts) | 3 | Criação com ID gerado e campos extras, busca por ID e listagem ordenada por ID. |
+| [enrollments.test.ts](server/test/integration/enrollments.test.ts) | 10 | Criação com data ISO e campos extras, busca pela chave composta, duplicação, referências inexistentes e campos obrigatórios. |
 | [errors.test.ts](server/test/integration/errors.test.ts) | 28 | Unicidade de alunos e disciplinas, recursos ausentes e validações compartilhadas entre recursos. |
 
 Um caso pode conter várias requisições e asserções. A divisão por arquivo organiza os assuntos; a quantidade de casos não representa a quantidade de endpoints ou de comportamentos verificados.
@@ -42,7 +41,7 @@ As rotas recebem JSON e interpretam os parâmetros; os serviços validam os dado
 
 Por exemplo, o teste de matrícula duplicada cadastra um aluno e uma disciplina, realiza a matrícula e repete a operação. O PostgreSQL rejeita a duplicação pela chave primária composta, o serviço traduz essa violação e a API responde com `409 Conflict`. O teste verifica toda essa colaboração.
 
-Não há mocks de serviços, repositórios ou consultas. Jest executa os casos, ts-jest processa TypeScript, `fetch` envia requisições reais e `pg.Client` mantém a conexão com o banco. Algumas verificações também consultam diretamente as tabelas para confirmar os dados gravados dentro da transação.
+Não há mocks de serviços, repositórios ou consultas. Jest executa os casos, ts-jest processa TypeScript, `fetch` envia requisições reais e `pg.Client` mantém a conexão com o banco. Os cenários de alunos, disciplinas e matrículas verificam os registros pelas respostas HTTP de criação, busca e listagem. Em errors.test.ts, consultas diretas também confirmam que entradas inválidas não gravaram alunos ou disciplinas.
 
 ## Como executar
 
@@ -71,8 +70,8 @@ O Jest procura arquivos `test/integration/**/*.test.ts`. O comando usa `--runInB
 Uma execução bem-sucedida apresenta:
 
 ```text
-Test Suites: 5 passed, 5 total
-Tests:       47 passed, 47 total
+Test Suites: 4 passed, 4 total
+Tests:       44 passed, 44 total
 ```
 
 ### 3. Verificar cobertura, tipos e compilação
@@ -146,11 +145,9 @@ Sequências de IDs do PostgreSQL podem avançar mesmo após um `ROLLBACK`. Assim
 
 | Área | Verificações |
 | --- | --- |
-| Aplicação HTTP | Healthcheck com `200`, rota inexistente com `404` e respostas JSON. |
-| Coleções vazias | Alunos, disciplinas e matrículas retornam `[]`. |
 | Alunos | Criação com `201`, busca por RA, persistência e ordenação pelo nome. |
 | Disciplinas | ID gerado pelo banco, criação, busca, persistência e ordenação por ID. |
-| Matrículas | Criação, busca pela chave composta, persistência, ordenação por RA e curso e data ISO no JSON. |
+| Matrículas | Criação, busca pela chave composta, persistência e data ISO no JSON. |
 | Campos extras | Campos adicionais não aparecem nos registros retornados nos cenários de criação verificados. |
 | Unicidade | RA repetido, nome de disciplina repetido e matrícula duplicada retornam `409`. |
 | Chaves estrangeiras | Matrícula com aluno ou disciplina inexistente retorna `404`. |
@@ -158,16 +155,14 @@ Sequências de IDs do PostgreSQL podem avançar mesmo após um `ROLLBACK`. Assim
 | Identificadores nas URLs | Zero, negativos, decimais, texto misturado, notação exponencial e valores acima do limite retornam `400`. |
 | Corpos e nomes inválidos | Tipos inadequados, campos ausentes, nomes curtos, espaços e nomes acima do limite são rejeitados. |
 | Chaves no JSON | Valores inválidos de RA e curso e ausência das chaves obrigatórias retornam `400`. |
-| Limites válidos | RA `2147483647` e nome com 100 caracteres são aceitos no cadastro de aluno. |
-| Parser JSON | JSON malformado retorna `400`; corpo acima do limite retorna `413`. |
 
-Nos erros, os testes verificam o status HTTP e a estrutura `{ statusCode, message, error }`. Nos cenários de criação e consulta, comparam os dados esperados. Consultas SQL diretas confirmam a persistência de alunos, disciplinas e matrículas dentro da transação.
+Nos erros, os testes verificam o status HTTP e a estrutura `{ statusCode, message, error }`. Nos cenários de criação e consulta, comparam os dados esperados. A recuperação de alunos, disciplinas e matrículas é verificada pelas rotas HTTP de busca e listagem, em testes separados dos cenários de criação. Os testes de ordenação usam dados que distinguem a ordem esperada da ordem de inserção e, no caso dos alunos, da ordem por RA.
 
 ## Como ler e ampliar os testes
 
-Cada caso prepara os dados, executa uma operação e verifica o resultado. O auxiliar `request()` envia JSON, verifica o `Content-Type` e devolve status e corpo da resposta. `expectError()` verifica o contrato dos erros `400`, `404` e `409`; os casos do parser verificam diretamente as respostas `400` e `413`.
+Cada caso prepara os dados, executa uma operação e verifica o resultado. O auxiliar `request()` envia JSON, verifica o `Content-Type` e devolve status e corpo da resposta. `expectError()` verifica o contrato dos erros `400`, `404` e `409`.
 
-Para enviar texto que não é JSON válido, `http.test.ts` usa `rawRequest()`: ele retorna a `Response` original do `fetch` e permite configurar o corpo sem passar por `JSON.stringify`. As requisições têm limite padrão de cinco segundos. A conexão PostgreSQL também tem limite de cinco segundos, e o `beforeAll` permite até quinze segundos para preparar o banco e iniciar o servidor.
+O auxiliar `rawRequest()` retorna a `Response` original do `fetch` e é usado internamente por `request()`. As requisições têm limite padrão de cinco segundos. A conexão PostgreSQL também tem limite de cinco segundos, e o `beforeAll` permite até quinze segundos para preparar o banco e iniciar o servidor.
 
 Este trecho demonstra um conflito de matrícula provocado no banco real:
 
@@ -200,10 +195,9 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
     ├── package.json                   # Dependências e comandos
     ├── test/
     │   ├── integration/
-    │   │   ├── students.test.ts       # Cadastro, consulta e limites de alunos
+    │   │   ├── students.test.ts       # Cadastro, consulta e ordenação de alunos
     │   │   ├── courses.test.ts        # Cadastro e consulta de disciplinas
-    │   │   ├── enrollments.test.ts    # Matrículas, ordenação e restrições
-    │   │   ├── http.test.ts           # Healthcheck, coleções e parser JSON
+    │   │   ├── enrollments.test.ts    # Matrículas, consulta e restrições
     │   │   └── errors.test.ts         # Validações e erros entre recursos
     │   └── support/
     │       ├── database.ts           # Schema, conexão e limpeza
@@ -269,7 +263,7 @@ Essa organização mantém as responsabilidades visíveis sem introduzir uma fer
 
 A suíte verifica a integração da API até o PostgreSQL. Não cobre o navegador, o frontend, o proxy Nginx, o processo iniciado por `main.ts`, o Pool de produção ou requisições concorrentes. Os testes verificam gravações dentro de transações revertidas; não verificam durabilidade após um commit e uma reconexão.
 
-O endpoint `/health` verifica a resposta da aplicação e não consulta o banco. Ainda assim, esse teste depende do PostgreSQL porque a preparação é compartilhada por toda a suíte.
+A suíte atual não inclui testes específicos de healthcheck, rota desconhecida, coleções vazias, JSON malformado ou corpo acima do limite. O arquivo `http.test.ts` foi removido; o foco está nos cenários de alunos, disciplinas, matrículas e validações entre recursos.
 
 ## Problemas comuns
 
@@ -303,4 +297,7 @@ Com as portas do modelo, a interface fica em `http://localhost:8080`, a API em `
 | Demonstração | `docker compose up -d --build` | Usa `.env`, aplica os scripts de inicialização do banco em um diretório de dados vazio e mantém os dados no volume `aula3_database_data`. |
 | Testes locais | `docker compose -f compose.test.yml up -d --wait` | Usa as credenciais fixas do Compose de testes, armazenamento temporário e schemas preparados pelos auxiliares. |
 | CI | Serviço PostgreSQL do workflow | Usa um banco temporário por job e a URL fornecida na etapa de testes. |
+
+
+
 

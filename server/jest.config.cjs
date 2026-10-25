@@ -1,6 +1,7 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
+  maxWorkers: 1,
   testMatch: ["<rootDir>/test/integration/**/*.test.ts"],
   clearMocks: true,
   restoreMocks: true,

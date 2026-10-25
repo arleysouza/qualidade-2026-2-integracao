@@ -7,10 +7,12 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "127.0.0.1:5434:5432"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     tmpfs:
       - /var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d aula3_test"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d aula3_test"]
       interval: 1s
       timeout: 5s
       retries: 30

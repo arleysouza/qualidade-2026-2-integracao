@@ -19,7 +19,7 @@ Um caso pode conter várias requisições e asserções. A divisão por arquivo 
 
 | Auxiliar | Responsabilidade |
 | --- | --- |
-| [database.ts](server/test/support/database.ts) | `createTestDatabase()` cria o cliente e o schema e fornece abertura, rollback e encerramento. |
+| [database.ts](server/test/support/database.ts) | `createTestDatabase()` cria o cliente e fornece abertura, rollback e encerramento. |
 | [http.ts](server/test/support/http.ts) | `createHttpClient()` fornece `request()`, `rawRequest()` e `expectError()`. |
 | [fixtures.ts](server/test/support/fixtures.ts) | `createEnrollmentPrerequisites()` cadastra aluno e disciplina pela API e retorna suas chaves. |
 | [integration-app.ts](server/test/support/integration-app.ts) | `useIntegrationApp()` combina os auxiliares, registra os hooks e inicia e encerra o servidor. |
@@ -53,9 +53,24 @@ Instale Node.js 24 e Docker com suporte a Docker Compose. Mantenha o Docker em e
 docker compose -f compose.test.yml up -d --wait
 ```
 
-O comando inicia somente o PostgreSQL exclusivo dos testes e aguarda seu healthcheck. O servidor HTTP será iniciado pela própria suíte.
+O comando inicia o PostgreSQL exclusivo dos testes e aguarda seu healthcheck. O Compose monta `database/init.sql` em `/docker-entrypoint-initdb.d/init.sql`, e o PostgreSQL executa o script na inicialização do banco vazio para criar as tabelas. O servidor HTTP será iniciado pela própria suíte.
 
 Use `compose.test.yml` sozinho, como no comando acima. Ele é uma configuração independente; não é necessário combiná-lo com `compose.yml` nem iniciar o frontend ou a API da demonstração.
+
+As responsabilidades ficam divididas assim:
+
+1. A variável `POSTGRES_DB` faz o PostgreSQL criar o banco `aula3_test`.
+2. O script `database/init.sql`, montado somente para leitura, cria as tabelas `students`, `courses` e `enrollments`, com suas restrições.
+3. Os testes abrem a conexão com esse banco e preparam os dados de cada cenário pela API.
+
+O auxiliar `database.ts` não lê arquivos SQL nem cria schemas ou tabelas. Se você alterar o `init.sql` depois que o banco já estiver inicializado, recrie o contêiner para aplicar a nova estrutura:
+
+```powershell
+docker compose -f compose.test.yml down
+docker compose -f compose.test.yml up -d --wait
+```
+
+Isso descarta os dados do banco temporário de testes.
 
 ### 2. Instalar dependências e executar os testes
 
@@ -65,7 +80,7 @@ npm ci
 npm test
 ```
 
-O Jest procura arquivos `test/integration/**/*.test.ts`. O comando usa `--runInBand` para executar a suíte em série, mantendo a execução simples para a aula. Dentro de cada arquivo, os testes compartilham uma conexão e usam transações para isolar os dados. Arquivos diferentes recebem conexões e schemas próprios. Não use `test.concurrent` nessa estrutura.
+O Jest procura arquivos `test/integration/**/*.test.ts`. O comando usa `--runInBand` para executar a suíte em série, mantendo a execução simples para a aula. A configuração `maxWorkers: 1` também mantém a execução sequencial ao chamar o Jest diretamente. Dentro de cada arquivo, os testes compartilham uma conexão e usam transações para isolar os dados. Arquivos diferentes recebem conexões próprias e compartilham as tabelas do schema `public`. Não use `test.concurrent` nessa estrutura.
 
 Uma execução bem-sucedida apresenta:
 
@@ -125,21 +140,23 @@ O auxiliar de banco lê somente `TEST_DATABASE_URL` para configurar a conexão. 
 
 ## Isolamento e ciclo de vida
 
-Cada arquivo de testes usa seu próprio schema, sua conexão PostgreSQL e seu servidor HTTP. Dentro do arquivo, cada teste usa uma transação. O auxiliar `useIntegrationApp()`, chamado dentro de `describe`, registra os hooks desse ciclo de vida.
+Cada arquivo de testes usa sua conexão PostgreSQL e seu servidor HTTP. As tabelas são criadas pelo Compose e compartilhadas entre os arquivos, executados sequencialmente. Dentro do arquivo, cada teste usa uma transação. O auxiliar `useIntegrationApp()`, chamado dentro de `describe`, registra os hooks desse ciclo de vida.
 
 | Etapa do Jest | Operações |
 | --- | --- |
-| `beforeAll` | Conecta ao PostgreSQL, cria um schema com prefixo `integration_` e UUID, configura o `search_path`, aplica `database/init.sql` e inicia o Express. |
+| `beforeAll` | Conecta ao PostgreSQL com as tabelas já criadas e inicia o Express. |
 | `beforeEach` | Executa `BEGIN` antes de cada teste. |
 | Teste | Prepara seus registros, envia requisições e verifica as respostas e os dados. |
 | `afterEach` | Executa `ROLLBACK`, desfazendo as alterações do teste. |
-| `afterAll` | Fecha o servidor e suas conexões HTTP, executa um rollback de limpeza, remove o schema com `DROP SCHEMA ... CASCADE` e encerra o cliente PostgreSQL. |
+| `afterAll` | Fecha o servidor e suas conexões HTTP, executa um rollback de limpeza e encerra o cliente PostgreSQL. |
 
 `createApp(client)` recebe o mesmo cliente PostgreSQL usado no controle das transações. Por isso, as consultas dos repositórios participam da transação aberta pelo teste. O servidor escuta em `127.0.0.1` com porta `0`, permitindo que o sistema operacional escolha uma porta disponível.
 
-A suíte aplica o SQL de criação das tabelas, mas não executa `database/seed.sql`. Cada teste prepara seus próprios dados. O auxiliar `fixtures()`, baseado em `createEnrollmentPrerequisites()`, cadastra um aluno e uma disciplina por HTTP nos cenários que precisam desses registros.
+O Compose aplica `database/init.sql`, mas não executa `database/seed.sql`. No CI, uma etapa do workflow aplica o mesmo SQL antes dos testes. Cada teste prepara seus próprios dados. O auxiliar `fixtures()`, baseado em `createEnrollmentPrerequisites()`, cadastra um aluno e uma disciplina por HTTP nos cenários que precisam desses registros.
 
 Sequências de IDs do PostgreSQL podem avançar mesmo após um `ROLLBACK`. Assim, os testes usam os IDs retornados pela API, sem pressupor que toda disciplina receberá o ID `1`.
+
+Por exemplo, um teste cadastra a aluna Ana e verifica a resposta da API. Ao terminar, o `ROLLBACK` desfaz o cadastro. O próximo teste encontra as mesmas tabelas, mas sem os registros inseridos pelo anterior. As tabelas permanecem disponíveis até o banco temporário ser descartado.
 
 ## Cenários verificados
 
@@ -162,7 +179,9 @@ Nos erros, os testes verificam o status HTTP e a estrutura `{ statusCode, messag
 
 Cada caso prepara os dados, executa uma operação e verifica o resultado. O auxiliar `request()` envia JSON, verifica o `Content-Type` e devolve status e corpo da resposta. `expectError()` verifica o contrato dos erros `400`, `404` e `409`.
 
-O auxiliar `rawRequest()` retorna a `Response` original do `fetch` e é usado internamente por `request()`. As requisições têm limite padrão de cinco segundos. A conexão PostgreSQL também tem limite de cinco segundos, e o `beforeAll` permite até quinze segundos para preparar o banco e iniciar o servidor.
+O auxiliar `rawRequest()` retorna a `Response` original do `fetch` e é usado internamente por `request()`. As requisições têm limite padrão de cinco segundos. A conexão PostgreSQL também tem limite de cinco segundos, e o `beforeAll` permite até quinze segundos para conectar ao banco e iniciar o servidor.
+
+Em `request(path, method, body)`, o método padrão é `GET`. Quando há um corpo, o auxiliar o converte para JSON com `JSON.stringify`. Depois da requisição, verifica se a resposta tem `Content-Type` JSON, interpreta o corpo com `response.json()` e retorna `{ status, body }`. A verificação do status esperado fica no teste ou em `expectError()`.
 
 Este trecho demonstra um conflito de matrícula provocado no banco real:
 
@@ -200,7 +219,7 @@ Uma violação SQL, como uma duplicação, deixa a transação PostgreSQL em est
     │   │   ├── enrollments.test.ts    # Matrículas, consulta e restrições
     │   │   └── errors.test.ts         # Validações e erros entre recursos
     │   └── support/
-    │       ├── database.ts           # Schema, conexão e limpeza
+    │       ├── database.ts           # Conexão, rollback e encerramento
     │       ├── http.ts               # Requisições e asserções de erros
     │       ├── fixtures.ts           # Pré-requisitos criados pela API
     │       └── integration-app.ts    # Servidor e hooks de cada suíte
@@ -229,8 +248,9 @@ As etapas são:
 2. Instalar as versões do `package-lock.json` com `npm ci`.
 3. Executar `npm run test:typecheck`.
 4. Executar `npm run build`.
-5. Executar `npm run test:coverage -- --ci` contra PostgreSQL real.
-6. Disponibilizar o diretório de cobertura como artefato `integration-coverage`, retido por sete dias, quando houver relatório gerado.
+5. Aplicar `database/init.sql` no contêiner PostgreSQL com `docker exec` e `psql`, criando as tabelas antes dos testes. A opção `ON_ERROR_STOP=1` faz a etapa falhar se houver erro no SQL.
+6. Executar `npm run test:coverage -- --ci` contra PostgreSQL real.
+7. Disponibilizar o diretório de cobertura como artefato `integration-coverage`, retido por sete dias, quando houver relatório gerado.
 
 Erros de tipos, compilação ou testes fazem o job falhar. O workflow tem permissões de leitura do repositório e limite de dez minutos. Não usa credenciais de produção; o banco de serviço é descartado ao final do job.
 
@@ -272,7 +292,7 @@ A suíte atual não inclui testes específicos de healthcheck, rota desconhecida
 | `ECONNREFUSED 127.0.0.1:5434` | Confirme que o Docker está em execução e inicie o serviço com `docker compose -f compose.test.yml up -d --wait`. |
 | Porta `5434` ocupada | Altere a porta publicada no Compose e ajuste `TEST_DATABASE_URL`. |
 | Falha de autenticação | Confira usuário, senha e banco na URL de conexão. |
-| Erro ao criar schema | Confira as permissões do usuário no banco de testes. |
+| Tabela inexistente | Confira os logs. Se o contêiner já existia antes da montagem do SQL, execute `docker compose -f compose.test.yml down` e depois `docker compose -f compose.test.yml up -d --wait` para recriar o banco temporário. |
 | Muitos testes com o mesmo erro de conexão | Resolva a conexão usada no `beforeAll`, necessária para todos os casos. |
 
 Na raiz do projeto, inspecione o serviço com:
@@ -295,8 +315,8 @@ Com as portas do modelo, a interface fica em `http://localhost:8080`, a API em `
 | Ambiente | Inicialização | Dados e persistência |
 | --- | --- | --- |
 | Demonstração | `docker compose up -d --build` | Usa `.env`, aplica os scripts de inicialização do banco em um diretório de dados vazio e mantém os dados no volume `aula3_database_data`. |
-| Testes locais | `docker compose -f compose.test.yml up -d --wait` | Usa as credenciais fixas do Compose de testes, armazenamento temporário e schemas preparados pelos auxiliares. |
-| CI | Serviço PostgreSQL do workflow | Usa um banco temporário por job e a URL fornecida na etapa de testes. |
+| Testes locais | `docker compose -f compose.test.yml up -d --wait` | Usa as credenciais fixas do Compose de testes, armazenamento temporário e tabelas criadas pelo `init.sql` montado no contêiner. |
+| CI | Serviço PostgreSQL do workflow | Usa um banco temporário por job, aplica `database/init.sql` antes dos testes e usa a URL fornecida na etapa de testes. |
 
 
 

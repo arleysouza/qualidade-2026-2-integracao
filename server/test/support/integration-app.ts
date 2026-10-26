@@ -35,7 +35,7 @@ export function useIntegrationApp() {
       const runningServer = server;
       if (runningServer) {
         await new Promise<void>((resolve, reject) => {
-          runningServer.close(error => error ? reject(error) : resolve());
+          runningServer.close((error) => (error ? reject(error) : resolve()));
           runningServer.closeAllConnections();
         });
       }
